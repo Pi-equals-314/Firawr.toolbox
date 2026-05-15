@@ -1,0 +1,730 @@
+"""
+███████╗██╗██████╗  █████╗ ██╗    ██╗██████╗
+██╔════╝██║██╔══██╗██╔══██╗██║    ██║██╔══██╗
+█████╗  ██║██████╔╝███████║██║ █╗ ██║██████╔╝
+██╔══╝  ██║██╔══██╗██╔══██║██║███╗██║██╔══██╗
+██║     ██║██║  ██║██║  ██║╚███╔███╔╝██║  ██║
+╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝ ╚══╝╚══╝ ╚═╝  ╚═╝
+
+  Python Toolbox — Dark Edition
+  Run:  pip install customtkinter  then  python firawr.py
+"""
+
+import os
+import sys
+import shutil
+import sqlite3
+import threading
+import customtkinter as ctk
+from tkinter import filedialog, messagebox
+
+# ─── Theme ────────────────────────────────────────────────────────────────────
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("green")
+
+GREEN       = "#2ecc71"
+GREEN_DIM   = "#1a7a42"
+GREEN_HOVER = "#27ae60"
+BG_DARK     = "#0d0d0d"
+BG_PANEL    = "#141414"
+BG_CARD     = "#1c1c1c"
+BG_INPUT    = "#242424"
+SIDEBAR_BG  = "#101010"
+TEXT_PRI    = "#e8e8e8"
+TEXT_SEC    = "#888888"
+TEXT_MUTED  = "#444444"
+BORDER      = "#2a2a2a"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TOOL PANELS
+# ══════════════════════════════════════════════════════════════════════════════
+
+class DashboardPanel(ctk.CTkFrame):
+    def __init__(self, master):
+        super().__init__(master, fg_color=BG_PANEL, corner_radius=0)
+
+        # Header
+        hdr = ctk.CTkFrame(self, fg_color="transparent")
+        hdr.pack(fill="x", padx=40, pady=(40, 8))
+        ctk.CTkLabel(hdr, text="Welcome back.", font=("Georgia", 30, "bold"),
+                     text_color=TEXT_PRI).pack(anchor="w")
+        ctk.CTkLabel(hdr, text="Your tools are ready.", font=("Georgia", 14),
+                     text_color=TEXT_SEC).pack(anchor="w", pady=(2, 0))
+
+        sep = ctk.CTkFrame(self, height=1, fg_color=BORDER)
+        sep.pack(fill="x", padx=40, pady=(16, 32))
+
+        # Tool cards grid
+        grid = ctk.CTkFrame(self, fg_color="transparent")
+        grid.pack(fill="both", expand=True, padx=40)
+        grid.columnconfigure((0, 1, 2), weight=1, uniform="col")
+
+        cards = [
+            ("🎙", "Speech Recorder", "Capture mic audio in\nRAW · WAV · AIFF · FLAC"),
+            ("🎵", "Audio Converter",  "Transcode between\naudio formats"),
+            ("💰", "Budget Tracker",   "Track income &\nexpenses with SQLite"),
+            ("🔢", "Calculator",       "Arithmetic, complex\nmath & more"),
+            ("📁", "File Organizer",   "Auto-sort files into\ncategory folders"),
+        ]
+
+        for i, (icon, title, desc) in enumerate(cards):
+            card = ctk.CTkFrame(grid, fg_color=BG_CARD, corner_radius=12,
+                                border_width=1, border_color=BORDER)
+            card.grid(row=i // 3, column=i % 3, padx=10, pady=10, sticky="nsew")
+            ctk.CTkLabel(card, text=icon, font=("Segoe UI Emoji", 28)).pack(anchor="w", padx=20, pady=(18, 4))
+            ctk.CTkLabel(card, text=title, font=("Georgia", 13, "bold"),
+                         text_color=GREEN).pack(anchor="w", padx=20)
+            ctk.CTkLabel(card, text=desc, font=("Consolas", 11),
+                         text_color=TEXT_SEC, justify="left").pack(anchor="w", padx=20, pady=(4, 18))
+
+        # Footer tip
+        ctk.CTkLabel(self, text="← Select a tool from the sidebar to get started",
+                     font=("Consolas", 11), text_color=TEXT_MUTED).pack(pady=24)
+
+
+# ─── Speech Recorder ──────────────────────────────────────────────────────────
+
+class SpeechRecorderPanel(ctk.CTkFrame):
+    def __init__(self, master):
+        super().__init__(master, fg_color=BG_PANEL, corner_radius=0)
+        self._build()
+
+    def _build(self):
+        _panel_header(self, "🎙", "Speech Recorder",
+                      "Record from your microphone and save in multiple formats.")
+
+        # Format selection
+        fmt_frame = _card(self, "Output Formats")
+        self.fmt_vars = {}
+        fmts = ["RAW", "WAV", "AIFF", "FLAC"]
+        row = ctk.CTkFrame(fmt_frame, fg_color="transparent")
+        row.pack(fill="x", padx=16, pady=8)
+        for f in fmts:
+            v = ctk.BooleanVar(value=True)
+            self.fmt_vars[f] = v
+            ctk.CTkCheckBox(row, text=f, variable=v,
+                            fg_color=GREEN, hover_color=GREEN_HOVER).pack(side="left", padx=12)
+
+        # Status box
+        self.status = _log_box(self)
+
+        # Buttons
+        btn_row = ctk.CTkFrame(self, fg_color="transparent")
+        btn_row.pack(pady=12)
+        ctk.CTkButton(btn_row, text="⏺  Start Recording", fg_color=GREEN,
+                      hover_color=GREEN_HOVER, text_color="#000",
+                      font=("Consolas", 13, "bold"),
+                      command=self._record).pack(side="left", padx=8)
+
+    def _record(self):
+        def task():
+            self._log("Importing speech_recognition…")
+            try:
+                import speech_recognition as sr
+            except ImportError:
+                self._log("✗  pip install SpeechRecognition pyaudio"); return
+            r = sr.Recognizer()
+            self._log("🎙  Listening — speak now…")
+            try:
+                with sr.Microphone() as src:
+                    audio = r.listen(src)
+            except Exception as e:
+                self._log(f"✗  {e}"); return
+            self._log("✓  Captured. Saving files…")
+            mapping = {
+                "RAW":  ("microphone-results.raw",  audio.get_raw_data),
+                "WAV":  ("microphone-results.wav",  audio.get_wav_data),
+                "AIFF": ("microphone-results.aiff", audio.get_aiff_data),
+                "FLAC": ("microphone-results.flac", audio.get_flac_data),
+            }
+            for fmt, (fname, getter) in mapping.items():
+                if self.fmt_vars[fmt].get():
+                    with open(fname, "wb") as f: f.write(getter())
+                    self._log(f"  ✓  Saved → {fname}")
+            self._log("Done.")
+        threading.Thread(target=task, daemon=True).start()
+
+    def _log(self, msg):
+        self.status.configure(state="normal")
+        self.status.insert("end", msg + "\n")
+        self.status.see("end")
+        self.status.configure(state="disabled")
+
+
+# ─── Audio Converter ──────────────────────────────────────────────────────────
+
+class AudioConverterPanel(ctk.CTkFrame):
+    def __init__(self, master):
+        super().__init__(master, fg_color=BG_PANEL, corner_radius=0)
+        self._build()
+
+    def _build(self):
+        _panel_header(self, "🎵", "Audio Converter",
+                      "Convert any audio file between formats using pydub.")
+
+        card = _card(self, "Conversion Settings")
+
+        # File picker
+        row1 = ctk.CTkFrame(card, fg_color="transparent")
+        row1.pack(fill="x", padx=16, pady=(8, 4))
+        ctk.CTkLabel(row1, text="Source File", font=("Consolas", 11),
+                     text_color=TEXT_SEC, width=100, anchor="w").pack(side="left")
+        self.file_var = ctk.StringVar()
+        ctk.CTkEntry(row1, textvariable=self.file_var, width=320,
+                     fg_color=BG_INPUT, border_color=BORDER,
+                     font=("Consolas", 11)).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(row1, text="Browse", width=80, fg_color=BG_CARD,
+                      hover_color=BORDER, border_width=1, border_color=BORDER,
+                      command=self._browse).pack(side="left")
+
+        # Format selector
+        row2 = ctk.CTkFrame(card, fg_color="transparent")
+        row2.pack(fill="x", padx=16, pady=(4, 12))
+        ctk.CTkLabel(row2, text="Target Format", font=("Consolas", 11),
+                     text_color=TEXT_SEC, width=100, anchor="w").pack(side="left")
+        self.fmt_var = ctk.StringVar(value="mp3")
+        ctk.CTkComboBox(row2, variable=self.fmt_var,
+                        values=["mp3","wav","flac","ogg","aac","m4a","wma"],
+                        width=140, fg_color=BG_INPUT, border_color=BORDER,
+                        button_color=GREEN, button_hover_color=GREEN_HOVER,
+                        font=("Consolas", 11)).pack(side="left")
+
+        self.status = _log_box(self)
+
+        ctk.CTkButton(self, text="🔄  Convert", fg_color=GREEN,
+                      hover_color=GREEN_HOVER, text_color="#000",
+                      font=("Consolas", 13, "bold"),
+                      command=self._convert).pack(pady=12)
+
+    def _browse(self):
+        path = filedialog.askopenfilename(
+            filetypes=[("Audio files","*.mp3 *.wav *.flac *.ogg *.aac *.m4a *.wma *.aiff"),
+                       ("All files","*.*")])
+        if path: self.file_var.set(path)
+
+    def _convert(self):
+        def task():
+            try:
+                from pydub import AudioSegment
+            except ImportError:
+                self._log("✗  pip install pydub"); return
+            src = self.file_var.get().strip()
+            frm = self.fmt_var.get().strip().lower()
+            if not src:
+                self._log("✗  No file selected."); return
+            if not os.path.isfile(src):
+                self._log(f"✗  File not found: {src}"); return
+            ext = src.rsplit(".", 1)[-1].lower()
+            if ext == frm:
+                self._log("⚠  Already in that format."); return
+            newpath = src[:-(len(ext))] + frm
+            self._log(f"Converting {ext} → {frm} …")
+            try:
+                AudioSegment.from_file(src, ext).export(newpath, format=frm)
+                self._log(f"✓  Saved → {newpath}")
+            except Exception as e:
+                self._log(f"✗  {e}")
+        threading.Thread(target=task, daemon=True).start()
+
+    def _log(self, msg):
+        self.status.configure(state="normal")
+        self.status.insert("end", msg + "\n")
+        self.status.see("end")
+        self.status.configure(state="disabled")
+
+
+# ─── Budget Tracker ───────────────────────────────────────────────────────────
+
+class BudgetTrackerPanel(ctk.CTkFrame):
+    def __init__(self, master):
+        super().__init__(master, fg_color=BG_PANEL, corner_radius=0)
+        self.conn = sqlite3.connect("firawr_budget.db")
+        c = self.conn.cursor()
+        c.execute("""CREATE TABLE IF NOT EXISTS transactions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        date TEXT, description TEXT,
+                        amount REAL, category TEXT)""")
+        self.conn.commit()
+        self._build()
+        self._refresh()
+
+    def _build(self):
+        _panel_header(self, "💰", "Budget Tracker",
+                      "Log income and expenses. Data stored locally in SQLite.")
+
+        # Balance bar
+        self.bal_frame = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=10,
+                                      border_width=1, border_color=BORDER)
+        self.bal_frame.pack(fill="x", padx=32, pady=(0, 16))
+        inner = ctk.CTkFrame(self.bal_frame, fg_color="transparent")
+        inner.pack(padx=20, pady=12)
+        self.bal_lbl    = ctk.CTkLabel(inner, text="Balance  $0.00",
+                                        font=("Georgia", 20, "bold"), text_color=GREEN)
+        self.bal_lbl.pack(side="left", padx=(0, 32))
+        self.inc_lbl    = ctk.CTkLabel(inner, text="Income  $0.00",
+                                        font=("Consolas", 12), text_color=TEXT_SEC)
+        self.inc_lbl.pack(side="left", padx=16)
+        self.exp_lbl    = ctk.CTkLabel(inner, text="Expenses  $0.00",
+                                        font=("Consolas", 12), text_color="#e74c3c")
+        self.exp_lbl.pack(side="left", padx=16)
+
+        # Input form
+        form = _card(self, "New Transaction")
+        fields = ctk.CTkFrame(form, fg_color="transparent")
+        fields.pack(fill="x", padx=16, pady=8)
+
+        def lbl_entry(parent, label, width=160):
+            ctk.CTkLabel(parent, text=label, font=("Consolas", 11),
+                         text_color=TEXT_SEC, width=80, anchor="w").pack(side="left")
+            e = ctk.CTkEntry(parent, width=width, fg_color=BG_INPUT,
+                             border_color=BORDER, font=("Consolas", 11))
+            e.pack(side="left", padx=(0, 16))
+            return e
+
+        self.date_e = lbl_entry(fields, "Date")
+        self.date_e.insert(0, "YYYY-MM-DD")
+        self.desc_e = lbl_entry(fields, "Description", 200)
+        self.amt_e  = lbl_entry(fields, "Amount $", 100)
+
+        cat_row = ctk.CTkFrame(form, fg_color="transparent")
+        cat_row.pack(fill="x", padx=16, pady=(0, 12))
+        ctk.CTkLabel(cat_row, text="Category", font=("Consolas", 11),
+                     text_color=TEXT_SEC, width=80, anchor="w").pack(side="left")
+        self.cat_cb = ctk.CTkComboBox(cat_row,
+            values=["Income","Housing","Food","Transportation",
+                    "Utilities","Entertainment","Health","Other"],
+            width=180, fg_color=BG_INPUT, border_color=BORDER,
+            button_color=GREEN, button_hover_color=GREEN_HOVER,
+            font=("Consolas", 11))
+        self.cat_cb.pack(side="left", padx=(0, 16))
+        ctk.CTkButton(cat_row, text="+ Add Transaction", fg_color=GREEN,
+                      hover_color=GREEN_HOVER, text_color="#000",
+                      font=("Consolas", 12, "bold"),
+                      command=self._add).pack(side="left")
+
+        # Table
+        tbl_frame = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=10,
+                                  border_width=1, border_color=BORDER)
+        tbl_frame.pack(fill="both", expand=True, padx=32, pady=(0, 8))
+
+        import tkinter.ttk as ttk
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure("Firawr.Treeview",
+                        background=BG_CARD, fieldbackground=BG_CARD,
+                        foreground=TEXT_PRI, rowheight=28,
+                        font=("Consolas", 11), borderwidth=0)
+        style.configure("Firawr.Treeview.Heading",
+                        background=BG_INPUT, foreground=GREEN,
+                        font=("Consolas", 11, "bold"), relief="flat")
+        style.map("Firawr.Treeview", background=[("selected", GREEN_DIM)])
+
+        cols = ("ID","Date","Description","Amount","Category")
+        self.tree = ttk.Treeview(tbl_frame, columns=cols, show="headings",
+                                  style="Firawr.Treeview", height=10)
+        widths = {"ID":40,"Date":100,"Description":260,"Amount":100,"Category":120}
+        for col in cols:
+            self.tree.heading(col, text=col)
+            self.tree.column(col, width=widths[col], anchor="w")
+        sb = ttk.Scrollbar(tbl_frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=sb.set)
+        self.tree.pack(side="left", fill="both", expand=True, padx=2, pady=2)
+        sb.pack(side="right", fill="y")
+
+        btn_row = ctk.CTkFrame(self, fg_color="transparent")
+        btn_row.pack(pady=(0, 16))
+        ctk.CTkButton(btn_row, text="🗑  Delete Selected", fg_color="#2a1515",
+                      hover_color="#3d1f1f", border_width=1, border_color="#5a2020",
+                      text_color="#e74c3c", font=("Consolas", 12),
+                      command=self._delete).pack()
+
+    def _add(self):
+        d    = self.date_e.get().strip()
+        desc = self.desc_e.get().strip()
+        amt  = self.amt_e.get().strip()
+        cat  = self.cat_cb.get()
+        if not all([d, desc, amt, cat]):
+            messagebox.showwarning("Missing fields", "Fill in all fields."); return
+        try: amt_f = float(amt)
+        except ValueError:
+            messagebox.showerror("Invalid", "Amount must be a number."); return
+        self.conn.cursor().execute(
+            "INSERT INTO transactions (date,description,amount,category) VALUES (?,?,?,?)",
+            (d, desc, amt_f, cat))
+        self.conn.commit()
+        for e in (self.date_e, self.desc_e, self.amt_e): e.delete(0, "end")
+        self.cat_cb.set("")
+        self._refresh()
+
+    def _delete(self):
+        sel = self.tree.selection()
+        if not sel: messagebox.showwarning("None selected","Pick a row."); return
+        tx_id = self.tree.item(sel[0])["values"][0]
+        self.conn.cursor().execute("DELETE FROM transactions WHERE id=?", (tx_id,))
+        self.conn.commit()
+        self._refresh()
+
+    def _refresh(self):
+        for row in self.tree.get_children(): self.tree.delete(row)
+        cur = self.conn.cursor()
+        cur.execute("SELECT * FROM transactions ORDER BY date DESC")
+        for row in cur.fetchall(): self.tree.insert("", "end", values=row)
+        cur.execute("SELECT COALESCE(SUM(amount),0) FROM transactions WHERE amount>0")
+        income = cur.fetchone()[0]
+        cur.execute("SELECT COALESCE(SUM(amount),0) FROM transactions WHERE amount<0")
+        expense = abs(cur.fetchone()[0])
+        balance = income - expense
+        self.bal_lbl.configure(text=f"Balance  ${balance:,.2f}",
+                                text_color=GREEN if balance >= 0 else "#e74c3c")
+        self.inc_lbl.configure(text=f"Income  ${income:,.2f}")
+        self.exp_lbl.configure(text=f"Expenses  ${expense:,.2f}")
+
+
+# ─── Calculator ───────────────────────────────────────────────────────────────
+
+class CalculatorPanel(ctk.CTkFrame):
+    def __init__(self, master):
+        super().__init__(master, fg_color=BG_PANEL, corner_radius=0)
+        self._expr = ""
+        self._build()
+
+    def _build(self):
+        _panel_header(self, "🔢", "Calculator",
+                      "Standard, scientific, and complex number arithmetic.")
+
+        outer = ctk.CTkFrame(self, fg_color="transparent")
+        outer.pack(expand=True)
+
+        # Display
+        disp_frame = ctk.CTkFrame(outer, fg_color=BG_CARD, corner_radius=12,
+                                   border_width=1, border_color=BORDER, width=380)
+        disp_frame.pack(pady=(0, 12))
+        self.expr_lbl = ctk.CTkLabel(disp_frame, text="", font=("Consolas", 13),
+                                      text_color=TEXT_SEC, anchor="e", width=360)
+        self.expr_lbl.pack(padx=16, pady=(10, 0), anchor="e")
+        self.disp = ctk.CTkLabel(disp_frame, text="0", font=("Georgia", 36, "bold"),
+                                  text_color=TEXT_PRI, anchor="e", width=360)
+        self.disp.pack(padx=16, pady=(0, 12), anchor="e")
+
+        # Button grid
+        btn_frame = ctk.CTkFrame(outer, fg_color="transparent")
+        btn_frame.pack()
+
+        layout = [
+            ["C", "±", "%", "÷"],
+            ["7", "8", "9", "×"],
+            ["4", "5", "6", "−"],
+            ["1", "2", "3", "+"],
+            ["0", ".", "⌫", "="],
+        ]
+
+        for r, row in enumerate(layout):
+            for c, lbl in enumerate(row):
+                is_op  = lbl in ("÷", "×", "−", "+", "=")
+                is_util= lbl in ("C", "±", "%", "⌫")
+                color  = GREEN if is_op else (BG_INPUT if is_util else BG_CARD)
+                hover  = GREEN_HOVER if is_op else BORDER
+                tc     = "#000" if is_op else TEXT_PRI
+                w = 360 // 4
+
+                btn = ctk.CTkButton(btn_frame, text=lbl, width=w - 6, height=56,
+                                    fg_color=color, hover_color=hover,
+                                    text_color=tc, font=("Georgia", 18),
+                                    corner_radius=8,
+                                    command=lambda x=lbl: self._press(x))
+                btn.grid(row=r, column=c, padx=3, pady=3)
+
+        # Extra functions
+        ext = ctk.CTkFrame(outer, fg_color="transparent")
+        ext.pack(pady=(12, 0))
+        for fn in ["√x", "x²", "1/x", "n!", "log", "sin", "cos", "tan"]:
+            ctk.CTkButton(ext, text=fn, width=72, height=36,
+                          fg_color=BG_CARD, hover_color=BORDER,
+                          border_width=1, border_color=BORDER,
+                          text_color=GREEN, font=("Consolas", 11),
+                          command=lambda f=fn: self._fn(f)).pack(side="left", padx=3)
+
+    def _press(self, k):
+        import math
+        op_map = {"÷": "/", "×": "*", "−": "-"}
+        if k == "C":
+            self._expr = ""; self._update("0")
+        elif k == "⌫":
+            self._expr = self._expr[:-1]; self._update(self._expr or "0")
+        elif k == "=":
+            try:
+                expr = self._expr.replace("÷","/").replace("×","*").replace("−","-")
+                result = eval(expr, {"__builtins__": {}}, {})
+                self._update(str(result)); self.expr_lbl.configure(text=self._expr+" =")
+                self._expr = str(result)
+            except Exception:
+                self._update("Error"); self._expr = ""
+        elif k == "±":
+            if self._expr.startswith("-"): self._expr = self._expr[1:]
+            elif self._expr: self._expr = "-" + self._expr
+            self._update(self._expr or "0")
+        elif k == "%":
+            try:
+                self._expr = str(eval(self._expr, {"__builtins__": {}}, {}) / 100)
+                self._update(self._expr)
+            except: pass
+        else:
+            sym = op_map.get(k, k)
+            self._expr += sym; self._update(self._expr)
+
+    def _fn(self, fn):
+        import math
+        try:
+            val = float(eval(self._expr or "0", {"__builtins__": {}}, {}))
+            res = {
+                "√x": math.sqrt(val), "x²": val**2, "1/x": 1/val,
+                "n!": math.factorial(int(val)), "log": math.log10(val),
+                "sin": math.sin(math.radians(val)),
+                "cos": math.cos(math.radians(val)),
+                "tan": math.tan(math.radians(val)),
+            }[fn]
+            self._expr = str(res); self._update(self._expr)
+        except Exception as e:
+            self._update("Error"); self._expr = ""
+
+    def _update(self, val):
+        display = val[-12:] if len(val) > 12 else val
+        self.disp.configure(text=display or "0")
+        if len(val) > 12: self.expr_lbl.configure(text=val)
+
+
+# ─── File Organizer ───────────────────────────────────────────────────────────
+
+class FileOrganizerPanel(ctk.CTkFrame):
+    CATEGORIES = {
+        "🎵 Music":        (".mp3",".wav",".flac",".m4a",".aac",".ogg",".wma"),
+        "🎬 Videos":       (".mp4",".avi",".mkv",".mpeg",".wmv",".mov",".webm"),
+        "💻 Source Files": (".py",".c",".cpp",".java",".js",".html",".css",".json",".sql"),
+        "⚙ Executables":  (".exe",".msi",".sh",".bat",".apk",".deb",".dmg",".iso"),
+        "🖼 Pictures":     (".jpg",".jpeg",".png",".gif",".bmp",".svg",".webp",".psd"),
+        "📄 Documents":    (".pdf",".doc",".docx",".xls",".xlsx",".ppt",".pptx",".txt",".csv"),
+        "🗜 Compressed":   (".zip",".rar",".tar",".gz",".7z"),
+    }
+
+    def __init__(self, master):
+        super().__init__(master, fg_color=BG_PANEL, corner_radius=0)
+        self._build()
+
+    def _build(self):
+        _panel_header(self, "📁", "File Organizer",
+                      "Automatically sort files in any directory into category folders.")
+
+        card = _card(self, "Target Directory")
+        row = ctk.CTkFrame(card, fg_color="transparent")
+        row.pack(fill="x", padx=16, pady=12)
+        self.dir_var = ctk.StringVar()
+        ctk.CTkEntry(row, textvariable=self.dir_var, width=380,
+                     fg_color=BG_INPUT, border_color=BORDER,
+                     font=("Consolas", 11),
+                     placeholder_text="Select or paste directory path…").pack(side="left", padx=(0,8))
+        ctk.CTkButton(row, text="Browse", width=90, fg_color=BG_CARD,
+                      hover_color=BORDER, border_width=1, border_color=BORDER,
+                      command=self._browse).pack(side="left")
+
+        # Preview section
+        prev_card = _card(self, "Preview  (categories that will be created)")
+        self.cat_frame = ctk.CTkFrame(prev_card, fg_color="transparent")
+        self.cat_frame.pack(fill="x", padx=16, pady=8)
+        cols = 3
+        for i, (cat, exts) in enumerate(self.CATEGORIES.items()):
+            f = ctk.CTkFrame(self.cat_frame, fg_color=BG_INPUT, corner_radius=8)
+            f.grid(row=i//cols, column=i%cols, padx=6, pady=6, sticky="ew")
+            ctk.CTkLabel(f, text=cat, font=("Consolas", 11, "bold"),
+                         text_color=GREEN).pack(anchor="w", padx=10, pady=(6,2))
+            ctk.CTkLabel(f, text="  ".join(exts[:4]) + ("…" if len(exts)>4 else ""),
+                         font=("Consolas", 9), text_color=TEXT_SEC).pack(anchor="w", padx=10, pady=(0,6))
+        for c in range(cols): self.cat_frame.columnconfigure(c, weight=1)
+
+        self.status = _log_box(self)
+
+        ctk.CTkButton(self, text="⚡  Organize Now", fg_color=GREEN,
+                      hover_color=GREEN_HOVER, text_color="#000",
+                      font=("Consolas", 13, "bold"),
+                      command=self._organize).pack(pady=12)
+
+    def _browse(self):
+        d = filedialog.askdirectory()
+        if d: self.dir_var.set(d)
+
+    def _organize(self):
+        def task():
+            directory = self.dir_var.get().strip()
+            if not os.path.isdir(directory):
+                self._log("✗  Not a valid directory."); return
+            if not os.access(directory, os.W_OK):
+                self._log("✗  Directory not writable."); return
+            moved = 0
+            for cat, exts in self.CATEGORIES.items():
+                name = cat.split(" ", 1)[1]   # strip emoji for folder name
+                matches = [f for f in os.listdir(directory)
+                           if os.path.isfile(os.path.join(directory, f))
+                           and os.path.splitext(f)[1].lower() in exts]
+                if not matches: continue
+                dest = os.path.join(directory, name)
+                os.makedirs(dest, exist_ok=True)
+                for fname in matches:
+                    shutil.move(os.path.join(directory, fname), os.path.join(dest, fname))
+                    self._log(f"  ↳ {fname}  →  {name}/")
+                    moved += 1
+            self._log(f"\n✓  Done! {moved} file(s) organized.")
+        threading.Thread(target=task, daemon=True).start()
+
+    def _log(self, msg):
+        self.status.configure(state="normal")
+        self.status.insert("end", msg + "\n")
+        self.status.see("end")
+        self.status.configure(state="disabled")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  HELPER WIDGETS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _panel_header(parent, icon, title, subtitle):
+    hdr = ctk.CTkFrame(parent, fg_color="transparent")
+    hdr.pack(fill="x", padx=32, pady=(32, 0))
+    top = ctk.CTkFrame(hdr, fg_color="transparent")
+    top.pack(fill="x")
+    ctk.CTkLabel(top, text=f"{icon}  {title}",
+                 font=("Georgia", 22, "bold"), text_color=TEXT_PRI).pack(side="left")
+    ctk.CTkLabel(hdr, text=subtitle, font=("Consolas", 11),
+                 text_color=TEXT_SEC).pack(anchor="w", pady=(4, 0))
+    ctk.CTkFrame(parent, height=1, fg_color=BORDER).pack(fill="x", padx=32, pady=16)
+
+
+def _card(parent, label):
+    outer = ctk.CTkFrame(parent, fg_color=BG_CARD, corner_radius=10,
+                          border_width=1, border_color=BORDER)
+    outer.pack(fill="x", padx=32, pady=(0, 12))
+    ctk.CTkLabel(outer, text=label, font=("Consolas", 10),
+                 text_color=TEXT_MUTED).pack(anchor="w", padx=16, pady=(10, 0))
+    return outer
+
+
+def _log_box(parent):
+    frame = ctk.CTkFrame(parent, fg_color=BG_CARD, corner_radius=10,
+                          border_width=1, border_color=BORDER)
+    frame.pack(fill="both", expand=True, padx=32, pady=(0, 0))
+    ctk.CTkLabel(frame, text="Output", font=("Consolas", 10),
+                 text_color=TEXT_MUTED).pack(anchor="w", padx=14, pady=(8, 0))
+    box = ctk.CTkTextbox(frame, fg_color="transparent", font=("Consolas", 11),
+                          text_color=GREEN, state="disabled",
+                          scrollbar_button_color=BORDER)
+    box.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+    return box
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  MAIN APP  –  Sidebar + Content area
+# ══════════════════════════════════════════════════════════════════════════════
+
+TOOL_REGISTRY = [
+    # (sidebar label, icon, panel class)
+    # ── add new tools here ──────────────────────────────────────────────────
+    ("Dashboard",        "⬡",  DashboardPanel),
+    ("Speech Recorder",  "🎙", SpeechRecorderPanel),
+    ("Audio Converter",  "🎵", AudioConverterPanel),
+    ("Budget Tracker",   "💰", BudgetTrackerPanel),
+    ("Calculator",       "🔢", CalculatorPanel),
+    ("File Organizer",   "📁", FileOrganizerPanel),
+]
+
+
+class FirawrApp(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+        self.title("Firawr")
+        self.geometry("1120x720")
+        self.minsize(900, 600)
+        self.configure(fg_color=BG_DARK)
+
+        self._panels   = {}
+        self._nav_btns = {}
+        self._active   = None
+
+        self._build_sidebar()
+        self._build_content()
+        self._select("Dashboard")
+
+    # ── Sidebar ───────────────────────────────────────────────────────────
+    def _build_sidebar(self):
+        sb = ctk.CTkFrame(self, width=220, fg_color=SIDEBAR_BG,
+                           corner_radius=0, border_width=0)
+        sb.pack(side="left", fill="y")
+        sb.pack_propagate(False)
+
+        # Logo
+        logo_frame = ctk.CTkFrame(sb, fg_color="transparent")
+        logo_frame.pack(fill="x", padx=24, pady=(28, 6))
+        ctk.CTkLabel(logo_frame, text="Firawr",
+                     font=("Georgia", 26, "bold"),
+                     text_color=GREEN).pack(anchor="w")
+        ctk.CTkLabel(logo_frame, text="Python Toolbox",
+                     font=("Consolas", 10),
+                     text_color=TEXT_MUTED).pack(anchor="w")
+
+        ctk.CTkFrame(sb, height=1, fg_color=BORDER).pack(fill="x", padx=16, pady=(12, 20))
+
+        # Nav buttons
+        nav = ctk.CTkFrame(sb, fg_color="transparent")
+        nav.pack(fill="x", padx=12)
+
+        for label, icon, _ in TOOL_REGISTRY:
+            is_dash = label == "Dashboard"
+            btn = ctk.CTkButton(
+                nav,
+                text=f"  {icon}   {label}",
+                anchor="w",
+                height=40,
+                fg_color="transparent",
+                hover_color=BG_CARD,
+                text_color=TEXT_SEC,
+                font=("Consolas", 12),
+                corner_radius=8,
+                command=lambda l=label: self._select(l),
+            )
+            btn.pack(fill="x", pady=2)
+            self._nav_btns[label] = btn
+
+        # Version tag at bottom
+        ctk.CTkLabel(sb, text="v1.0  ·  add tools in TOOL_REGISTRY",
+                     font=("Consolas", 9), text_color=TEXT_MUTED,
+                     wraplength=190).pack(side="bottom", pady=20, padx=16)
+
+    # ── Content area ──────────────────────────────────────────────────────
+    def _build_content(self):
+        self._content = ctk.CTkFrame(self, fg_color=BG_PANEL, corner_radius=0)
+        self._content.pack(side="left", fill="both", expand=True)
+
+    def _select(self, label):
+        # Deactivate old
+        if self._active and self._active in self._nav_btns:
+            self._nav_btns[self._active].configure(
+                fg_color="transparent", text_color=TEXT_SEC)
+        if self._active and self._active in self._panels:
+            self._panels[self._active].pack_forget()
+
+        # Activate new
+        self._active = label
+        self._nav_btns[label].configure(
+            fg_color=BG_CARD,
+            text_color=GREEN)
+
+        # Lazy-load panel
+        if label not in self._panels:
+            panel_cls = next(pc for l, _, pc in TOOL_REGISTRY if l == label)
+            self._panels[label] = panel_cls(self._content)
+
+        self._panels[label].pack(fill="both", expand=True)
+
+
+# ─── Entry point ──────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    app = FirawrApp()
+    app.mainloop()
