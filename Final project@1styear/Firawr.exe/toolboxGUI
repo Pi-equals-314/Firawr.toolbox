@@ -7,14 +7,19 @@
 ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝ ╚══╝╚══╝ ╚═╝  ╚═╝
 
   Python Toolbox — Dark Edition
-  Run:  pip install customtkinter  then  python firawr.py
 """
 
+import ast
 import os
+import re
 import sys
 import shutil
 import sqlite3
+import tempfile
 import threading
+import sounddevice as sd
+import soundfile as sf
+import numpy as np
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
 
@@ -61,11 +66,14 @@ class DashboardPanel(ctk.CTkFrame):
         grid.columnconfigure((0, 1, 2), weight=1, uniform="col")
 
         cards = [
-            ("🎙", "Speech Recorder", "Capture mic audio in\nRAW · WAV · AIFF · FLAC"),
-            ("🎵", "Audio Converter",  "Transcode between\naudio formats"),
-            ("💰", "Budget Tracker",   "Track income &\nexpenses with SQLite"),
-            ("🔢", "Calculator",       "Arithmetic, complex\nmath & more"),
-            ("📁", "File Organizer",   "Auto-sort files into\ncategory folders"),
+            ("🎙", "Speech Recorder",  "Capture mic audio in\nRAW · WAV · AIFF · FLAC"),
+            ("🎵", "Audio Converter",   "Transcode between\naudio formats"),
+            ("💰", "Budget Tracker",    "Track income &\nexpenses with SQLite"),
+            ("🔢", "Calculator",        "Arithmetic, complex\nmath & more"),
+            ("📁", "File Organizer",    "Auto-sort files into\ncategory folders"),
+            ("🧑‍💻", "Code Reviewer",   "Lint & style-check\nPython code instantly"),
+            ("🔗", "URL Shortener",     "Shorten any URL\nvia pyshorteners"),
+            ("🌐", "Voice Translator",  "Speak → transcribe\n→ translate live"),
         ]
 
         for i, (icon, title, desc) in enumerate(cards):
@@ -94,7 +102,6 @@ class SpeechRecorderPanel(ctk.CTkFrame):
         _panel_header(self, "🎙", "Speech Recorder",
                       "Record from your microphone and save in multiple formats.")
 
-        # Format selection
         fmt_frame = _card(self, "Output Formats")
         self.fmt_vars = {}
         fmts = ["RAW", "WAV", "AIFF", "FLAC"]
@@ -106,10 +113,8 @@ class SpeechRecorderPanel(ctk.CTkFrame):
             ctk.CTkCheckBox(row, text=f, variable=v,
                             fg_color=GREEN, hover_color=GREEN_HOVER).pack(side="left", padx=12)
 
-        # Status box
         self.status = _log_box(self)
 
-        # Buttons
         btn_row = ctk.CTkFrame(self, fg_color="transparent")
         btn_row.pack(pady=12)
         ctk.CTkButton(btn_row, text="⏺  Start Recording", fg_color=GREEN,
@@ -119,30 +124,68 @@ class SpeechRecorderPanel(ctk.CTkFrame):
 
     def _record(self):
         def task():
-            self._log("Importing speech_recognition…")
+            self._log("🎙  Recording for 5 seconds...")
+
+        try:
+            samplerate = 44100
+            duration = 5
+
+            recording = sd.rec(
+                int(duration * samplerate),
+                samplerate=samplerate,
+                channels=1,
+                dtype='int16'
+            )
+
+            sd.wait()
+
+            temp_wav = "temp_recording.wav"
+            sf.write(temp_wav, recording, samplerate)
+
+        except Exception as e:
+            self._log(f"✗  {e}")
+            return
+
+        self._log("✓  Captured. Saving files…")
+
+        try:
+            with open(temp_wav, "rb") as f:
+                wav_data = f.read()
+
+            if self.fmt_vars["WAV"].get():
+                with open("microphone-results.wav", "wb") as f:
+                    f.write(wav_data)
+                self._log("  ✓  Saved → microphone-results.wav")
+
             try:
-                import speech_recognition as sr
+                from pydub import AudioSegment
+
+                audio = AudioSegment.from_wav(temp_wav)
+
+                if self.fmt_vars["RAW"].get():
+                    with open("microphone-results.raw", "wb") as f:
+                        f.write(audio.raw_data)
+                    self._log("  ✓  Saved → microphone-results.raw")
+
+                if self.fmt_vars["AIFF"].get():
+                    audio.export("microphone-results.aiff", format="aiff")
+                    self._log("  ✓  Saved → microphone-results.aiff")
+
+                if self.fmt_vars["FLAC"].get():
+                    audio.export("microphone-results.flac", format="flac")
+                    self._log("  ✓  Saved → microphone-results.flac")
+
             except ImportError:
-                self._log("✗  pip install SpeechRecognition pyaudio"); return
-            r = sr.Recognizer()
-            self._log("🎙  Listening — speak now…")
-            try:
-                with sr.Microphone() as src:
-                    audio = r.listen(src)
-            except Exception as e:
-                self._log(f"✗  {e}"); return
-            self._log("✓  Captured. Saving files…")
-            mapping = {
-                "RAW":  ("microphone-results.raw",  audio.get_raw_data),
-                "WAV":  ("microphone-results.wav",  audio.get_wav_data),
-                "AIFF": ("microphone-results.aiff", audio.get_aiff_data),
-                "FLAC": ("microphone-results.flac", audio.get_flac_data),
-            }
-            for fmt, (fname, getter) in mapping.items():
-                if self.fmt_vars[fmt].get():
-                    with open(fname, "wb") as f: f.write(getter())
-                    self._log(f"  ✓  Saved → {fname}")
-            self._log("Done.")
+                self._log("✗  pip install pydub")
+
+            if os.path.exists(temp_wav):
+                os.remove(temp_wav)
+
+        except Exception as e:
+            self._log(f"✗  {e}")
+
+        self._log("Done.")
+
         threading.Thread(target=task, daemon=True).start()
 
     def _log(self, msg):
@@ -165,7 +208,6 @@ class AudioConverterPanel(ctk.CTkFrame):
 
         card = _card(self, "Conversion Settings")
 
-        # File picker
         row1 = ctk.CTkFrame(card, fg_color="transparent")
         row1.pack(fill="x", padx=16, pady=(8, 4))
         ctk.CTkLabel(row1, text="Source File", font=("Consolas", 11),
@@ -178,7 +220,6 @@ class AudioConverterPanel(ctk.CTkFrame):
                       hover_color=BORDER, border_width=1, border_color=BORDER,
                       command=self._browse).pack(side="left")
 
-        # Format selector
         row2 = ctk.CTkFrame(card, fg_color="transparent")
         row2.pack(fill="x", padx=16, pady=(4, 12))
         ctk.CTkLabel(row2, text="Target Format", font=("Consolas", 11),
@@ -253,23 +294,21 @@ class BudgetTrackerPanel(ctk.CTkFrame):
         _panel_header(self, "💰", "Budget Tracker",
                       "Log income and expenses. Data stored locally in SQLite.")
 
-        # Balance bar
         self.bal_frame = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=10,
                                       border_width=1, border_color=BORDER)
         self.bal_frame.pack(fill="x", padx=32, pady=(0, 16))
         inner = ctk.CTkFrame(self.bal_frame, fg_color="transparent")
         inner.pack(padx=20, pady=12)
-        self.bal_lbl    = ctk.CTkLabel(inner, text="Balance  $0.00",
-                                        font=("Georgia", 20, "bold"), text_color=GREEN)
+        self.bal_lbl = ctk.CTkLabel(inner, text="Balance  $0.00",
+                                     font=("Georgia", 20, "bold"), text_color=GREEN)
         self.bal_lbl.pack(side="left", padx=(0, 32))
-        self.inc_lbl    = ctk.CTkLabel(inner, text="Income  $0.00",
-                                        font=("Consolas", 12), text_color=TEXT_SEC)
+        self.inc_lbl = ctk.CTkLabel(inner, text="Income  $0.00",
+                                     font=("Consolas", 12), text_color=TEXT_SEC)
         self.inc_lbl.pack(side="left", padx=16)
-        self.exp_lbl    = ctk.CTkLabel(inner, text="Expenses  $0.00",
-                                        font=("Consolas", 12), text_color="#e74c3c")
+        self.exp_lbl = ctk.CTkLabel(inner, text="Expenses  $0.00",
+                                     font=("Consolas", 12), text_color="#e74c3c")
         self.exp_lbl.pack(side="left", padx=16)
 
-        # Input form
         form = _card(self, "New Transaction")
         fields = ctk.CTkFrame(form, fg_color="transparent")
         fields.pack(fill="x", padx=16, pady=8)
@@ -303,7 +342,6 @@ class BudgetTrackerPanel(ctk.CTkFrame):
                       font=("Consolas", 12, "bold"),
                       command=self._add).pack(side="left")
 
-        # Table
         tbl_frame = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=10,
                                   border_width=1, border_color=BORDER)
         tbl_frame.pack(fill="both", expand=True, padx=32, pady=(0, 8))
@@ -396,7 +434,6 @@ class CalculatorPanel(ctk.CTkFrame):
         outer = ctk.CTkFrame(self, fg_color="transparent")
         outer.pack(expand=True)
 
-        # Display
         disp_frame = ctk.CTkFrame(outer, fg_color=BG_CARD, corner_radius=12,
                                    border_width=1, border_color=BORDER, width=380)
         disp_frame.pack(pady=(0, 12))
@@ -407,7 +444,6 @@ class CalculatorPanel(ctk.CTkFrame):
                                   text_color=TEXT_PRI, anchor="e", width=360)
         self.disp.pack(padx=16, pady=(0, 12), anchor="e")
 
-        # Button grid
         btn_frame = ctk.CTkFrame(outer, fg_color="transparent")
         btn_frame.pack()
 
@@ -421,13 +457,12 @@ class CalculatorPanel(ctk.CTkFrame):
 
         for r, row in enumerate(layout):
             for c, lbl in enumerate(row):
-                is_op  = lbl in ("÷", "×", "−", "+", "=")
-                is_util= lbl in ("C", "±", "%", "⌫")
-                color  = GREEN if is_op else (BG_INPUT if is_util else BG_CARD)
-                hover  = GREEN_HOVER if is_op else BORDER
-                tc     = "#000" if is_op else TEXT_PRI
+                is_op   = lbl in ("÷", "×", "−", "+", "=")
+                is_util = lbl in ("C", "±", "%", "⌫")
+                color   = GREEN if is_op else (BG_INPUT if is_util else BG_CARD)
+                hover   = GREEN_HOVER if is_op else BORDER
+                tc      = "#000" if is_op else TEXT_PRI
                 w = 360 // 4
-
                 btn = ctk.CTkButton(btn_frame, text=lbl, width=w - 6, height=56,
                                     fg_color=color, hover_color=hover,
                                     text_color=tc, font=("Georgia", 18),
@@ -435,7 +470,6 @@ class CalculatorPanel(ctk.CTkFrame):
                                     command=lambda x=lbl: self._press(x))
                 btn.grid(row=r, column=c, padx=3, pady=3)
 
-        # Extra functions
         ext = ctk.CTkFrame(outer, fg_color="transparent")
         ext.pack(pady=(12, 0))
         for fn in ["√x", "x²", "1/x", "n!", "log", "sin", "cos", "tan"]:
@@ -485,7 +519,7 @@ class CalculatorPanel(ctk.CTkFrame):
                 "tan": math.tan(math.radians(val)),
             }[fn]
             self._expr = str(res); self._update(self._expr)
-        except Exception as e:
+        except Exception:
             self._update("Error"); self._expr = ""
 
     def _update(self, val):
@@ -527,7 +561,6 @@ class FileOrganizerPanel(ctk.CTkFrame):
                       hover_color=BORDER, border_width=1, border_color=BORDER,
                       command=self._browse).pack(side="left")
 
-        # Preview section
         prev_card = _card(self, "Preview  (categories that will be created)")
         self.cat_frame = ctk.CTkFrame(prev_card, fg_color="transparent")
         self.cat_frame.pack(fill="x", padx=16, pady=8)
@@ -561,7 +594,7 @@ class FileOrganizerPanel(ctk.CTkFrame):
                 self._log("✗  Directory not writable."); return
             moved = 0
             for cat, exts in self.CATEGORIES.items():
-                name = cat.split(" ", 1)[1]   # strip emoji for folder name
+                name = cat.split(" ", 1)[1]
                 matches = [f for f in os.listdir(directory)
                            if os.path.isfile(os.path.join(directory, f))
                            and os.path.splitext(f)[1].lower() in exts]
@@ -574,6 +607,527 @@ class FileOrganizerPanel(ctk.CTkFrame):
                     moved += 1
             self._log(f"\n✓  Done! {moved} file(s) organized.")
         threading.Thread(target=task, daemon=True).start()
+
+    def _log(self, msg):
+        self.status.configure(state="normal")
+        self.status.insert("end", msg + "\n")
+        self.status.see("end")
+        self.status.configure(state="disabled")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  NEW TOOLS
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ─── Code Reviewer ────────────────────────────────────────────────────────────
+
+class _CodeReviewerCore:
+    """
+    Pure-logic code reviewer — no GUI dependencies.
+    Fixed from original: pycodestyle is run against a temp file (it expects
+    a real path, not a string), and the undefined-var heuristic is preserved
+    as-is from the original.
+    """
+
+    def __init__(self):
+        self.feedback = []
+
+    # ── public entry points ────────────────────────────────────────────────
+
+    def analyze_file(self, file_path: str):
+        try:
+            with open(file_path, "r", encoding="utf-8") as fh:
+                code = fh.read()
+        except OSError as e:
+            self.feedback.append(f"✗  Cannot open file: {e}")
+            return
+        self.analyze_code(code)
+
+    def analyze_code(self, code: str):
+        self.feedback.clear()
+        try:
+            tree = ast.parse(code)
+        except SyntaxError as e:
+            self.feedback.append(f"SyntaxError — line {e.lineno}: {e.msg}")
+            return
+
+        self._check_missing_docstrings(tree)
+        self._check_undefined_vars(tree)
+        self._check_code_style(code)
+        self._check_comments(code)
+
+    # ── checks ────────────────────────────────────────────────────────────
+
+    def _check_missing_docstrings(self, tree):
+        """Flag functions that have no docstring (original called this 'indentation')."""
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                first = node.body[0] if node.body else None
+                has_doc = (
+                    first and
+                    isinstance(first, ast.Expr) and
+                    isinstance(first.value, ast.Constant) and
+                    isinstance(first.value.value, str)
+                )
+                if not has_doc:
+                    self.feedback.append(
+                        f"⚠  Function '{node.name}' (line {node.lineno}) has no docstring."
+                    )
+
+    def _check_undefined_vars(self, tree):
+        """
+        Heuristic: collect names that appear in Load context before any
+        Store context in module scope.  Builtins and common globals are
+        excluded to cut noise.
+        """
+        BUILTINS = set(dir(__builtins__)) if isinstance(__builtins__, dict) \
+                   else set(dir(__builtins__))
+        stored  = set()
+        suspect = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name):
+                if isinstance(node.ctx, ast.Store):
+                    stored.add(node.id)
+                elif isinstance(node.ctx, ast.Load):
+                    if node.id not in stored and node.id not in BUILTINS:
+                        suspect.append((node.id, getattr(node, "lineno", "?")))
+        seen = set()
+        for name, lineno in suspect:
+            if name not in seen and name not in stored:
+                self.feedback.append(
+                    f"⚠  '{name}' (line {lineno}) may be used before assignment."
+                )
+                seen.add(name)
+
+    def _check_code_style(self, code: str):
+        """Write code to a temp file so pycodestyle can analyse it properly."""
+        try:
+            import pycodestyle
+        except ImportError:
+            self.feedback.append("ℹ  pip install pycodestyle  to enable style checks.")
+            return
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py",
+                                         delete=False, encoding="utf-8") as tmp:
+            tmp.write(code)
+            tmp_path = tmp.name
+        try:
+            style  = pycodestyle.StyleGuide(quiet=True)
+            result = style.check_files([tmp_path])
+            if result.total_errors:
+                self.feedback.append(
+                    f"✗  pycodestyle found {result.total_errors} style issue(s) "
+                    f"(E1xx indentation, E2xx whitespace, E3xx blank lines, etc.)."
+                )
+            else:
+                self.feedback.append("✓  pycodestyle: no style issues found.")
+        finally:
+            os.unlink(tmp_path)
+
+    def _check_comments(self, code: str):
+        for i, line in enumerate(code.splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                # bare '#' or '#X' with no space
+                if len(stripped) == 1 or stripped[1] != " ":
+                    self.feedback.append(
+                        f"⚠  Comment style (line {i}): use '# text' not '{stripped[:10]}'"
+                    )
+
+    def get_feedback(self):
+        return self.feedback
+
+
+class CodeReviewerPanel(ctk.CTkFrame):
+    def __init__(self, master):
+        super().__init__(master, fg_color=BG_PANEL, corner_radius=0)
+        self._reviewer = _CodeReviewerCore()
+        self._build()
+
+    def _build(self):
+        _panel_header(self, "🧑‍💻", "Code Reviewer",
+                      "Paste Python code or load a file — get lint & style feedback instantly.")
+
+        # ── Source selector ───────────────────────────────────────────────
+        src_card = _card(self, "Source")
+        src_row  = ctk.CTkFrame(src_card, fg_color="transparent")
+        src_row.pack(fill="x", padx=16, pady=10)
+
+        self.file_var = ctk.StringVar()
+        ctk.CTkEntry(src_row, textvariable=self.file_var, width=340,
+                     fg_color=BG_INPUT, border_color=BORDER, font=("Consolas", 11),
+                     placeholder_text="Optional: load a .py file…").pack(side="left", padx=(0, 8))
+        ctk.CTkButton(src_row, text="Browse", width=80, fg_color=BG_CARD,
+                      hover_color=BORDER, border_width=1, border_color=BORDER,
+                      command=self._browse).pack(side="left", padx=(0, 12))
+        ctk.CTkButton(src_row, text="Load File", width=90, fg_color=BG_CARD,
+                      hover_color=BORDER, border_width=1, border_color=BORDER,
+                      command=self._load_file).pack(side="left")
+
+        # ── Code editor area ──────────────────────────────────────────────
+        edit_card = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=10,
+                                  border_width=1, border_color=BORDER)
+        edit_card.pack(fill="both", expand=True, padx=32, pady=(0, 12))
+        ctk.CTkLabel(edit_card, text="Code Editor", font=("Consolas", 10),
+                     text_color=TEXT_MUTED).pack(anchor="w", padx=14, pady=(8, 0))
+        self.editor = ctk.CTkTextbox(edit_card, fg_color="transparent",
+                                      font=("Consolas", 12), text_color=TEXT_PRI,
+                                      scrollbar_button_color=BORDER)
+        self.editor.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        self.editor.insert("end", "# Paste your Python code here…\n")
+
+        # ── Output log ────────────────────────────────────────────────────
+        self.status = _log_box(self)
+
+        # ── Action buttons ────────────────────────────────────────────────
+        btn_row = ctk.CTkFrame(self, fg_color="transparent")
+        btn_row.pack(pady=12)
+        ctk.CTkButton(btn_row, text="🔍  Run Review", fg_color=GREEN,
+                      hover_color=GREEN_HOVER, text_color="#000",
+                      font=("Consolas", 13, "bold"),
+                      command=self._run_review).pack(side="left", padx=8)
+        ctk.CTkButton(btn_row, text="🗑  Clear", width=90, fg_color=BG_CARD,
+                      hover_color=BORDER, border_width=1, border_color=BORDER,
+                      text_color=TEXT_SEC, font=("Consolas", 12),
+                      command=self._clear).pack(side="left", padx=4)
+
+    # ── Callbacks ─────────────────────────────────────────────────────────
+
+    def _browse(self):
+        path = filedialog.askopenfilename(filetypes=[("Python files","*.py"),("All","*.*")])
+        if path: self.file_var.set(path)
+
+    def _load_file(self):
+        path = self.file_var.get().strip()
+        if not path or not os.path.isfile(path):
+            messagebox.showerror("Error", "Select a valid .py file first."); return
+        with open(path, "r", encoding="utf-8") as fh:
+            code = fh.read()
+        self.editor.delete("1.0", "end")
+        self.editor.insert("end", code)
+        self._log(f"✓  Loaded: {path}")
+
+    def _run_review(self):
+        def task():
+            code = self.editor.get("1.0", "end").strip()
+            if not code:
+                self._log("✗  Editor is empty."); return
+            self._log("─" * 48)
+            self._log("Running review…")
+            self._reviewer.analyze_code(code)
+            feedback = self._reviewer.get_feedback()
+            if not feedback:
+                self._log("✓  All checks passed — no issues found!")
+            else:
+                for line in feedback:
+                    self._log(f"  {line}")
+            self._log(f"─" * 48)
+            self._log(f"Done — {len(feedback)} finding(s).")
+        threading.Thread(target=task, daemon=True).start()
+
+    def _clear(self):
+        self.editor.delete("1.0", "end")
+        self.status.configure(state="normal")
+        self.status.delete("1.0", "end")
+        self.status.configure(state="disabled")
+
+    def _log(self, msg):
+        self.status.configure(state="normal")
+        self.status.insert("end", msg + "\n")
+        self.status.see("end")
+        self.status.configure(state="disabled")
+
+
+# ─── URL Shortener ────────────────────────────────────────────────────────────
+
+class URLShortenerPanel(ctk.CTkFrame):
+    """
+    Self-contained URL shortener using pyshorteners.
+    Original tool depended on internal app.models / app.services modules that
+    cannot be shipped standalone, so this reimplements the same contract
+    (validate URL → shorten → display result) using the pyshorteners library.
+
+    pip install pyshorteners
+    """
+
+    SERVICES = {
+        "TinyURL":  "tinyurl",
+        "Dagd":     "dagd",
+        "Clckru":   "clckru",
+        "Isgd":     "isgd",
+    }
+
+    def __init__(self, master):
+        super().__init__(master, fg_color=BG_PANEL, corner_radius=0)
+        self._build()
+
+    def _build(self):
+        _panel_header(self, "🔗", "URL Shortener",
+                      "Paste a long URL and get a short link — no account required.")
+
+        # ── Input card ────────────────────────────────────────────────────
+        card = _card(self, "URL Input")
+
+        url_row = ctk.CTkFrame(card, fg_color="transparent")
+        url_row.pack(fill="x", padx=16, pady=(8, 0))
+        ctk.CTkLabel(url_row, text="Long URL", font=("Consolas", 11),
+                     text_color=TEXT_SEC, width=90, anchor="w").pack(side="left")
+        self.url_var = ctk.StringVar()
+        ctk.CTkEntry(url_row, textvariable=self.url_var, width=400,
+                     fg_color=BG_INPUT, border_color=BORDER, font=("Consolas", 11),
+                     placeholder_text="https://example.com/very/long/url…").pack(side="left", padx=(0, 8))
+
+        svc_row = ctk.CTkFrame(card, fg_color="transparent")
+        svc_row.pack(fill="x", padx=16, pady=(6, 12))
+        ctk.CTkLabel(svc_row, text="Service", font=("Consolas", 11),
+                     text_color=TEXT_SEC, width=90, anchor="w").pack(side="left")
+        self.svc_var = ctk.StringVar(value="TinyURL")
+        ctk.CTkComboBox(svc_row, variable=self.svc_var,
+                        values=list(self.SERVICES.keys()),
+                        width=160, fg_color=BG_INPUT, border_color=BORDER,
+                        button_color=GREEN, button_hover_color=GREEN_HOVER,
+                        font=("Consolas", 11)).pack(side="left")
+
+        # ── Result card ───────────────────────────────────────────────────
+        res_card = _card(self, "Shortened URL")
+        res_inner = ctk.CTkFrame(res_card, fg_color="transparent")
+        res_inner.pack(fill="x", padx=16, pady=10)
+        self.result_var = ctk.StringVar(value="—")
+        result_entry = ctk.CTkEntry(res_inner, textvariable=self.result_var,
+                                     width=400, fg_color=BG_INPUT, border_color=BORDER,
+                                     font=("Consolas", 12), text_color=GREEN,
+                                     state="readonly")
+        result_entry.pack(side="left", padx=(0, 8))
+        ctk.CTkButton(res_inner, text="📋 Copy", width=80, fg_color=BG_CARD,
+                      hover_color=BORDER, border_width=1, border_color=BORDER,
+                      text_color=TEXT_SEC, font=("Consolas", 11),
+                      command=self._copy).pack(side="left")
+
+        # ── Log ───────────────────────────────────────────────────────────
+        self.status = _log_box(self)
+
+        # ── Action ────────────────────────────────────────────────────────
+        ctk.CTkButton(self, text="⚡  Shorten", fg_color=GREEN,
+                      hover_color=GREEN_HOVER, text_color="#000",
+                      font=("Consolas", 13, "bold"),
+                      command=self._shorten).pack(pady=12)
+
+    # ── Helpers ───────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _validate_url(url: str) -> bool:
+        pattern = re.compile(
+            r'^https?://'
+            r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'
+            r'localhost|\d{1,3}(?:\.\d{1,3}){3})'
+            r'(?::\d+)?(?:/?|[/?]\S+)$', re.IGNORECASE)
+        return bool(pattern.match(url))
+
+    def _shorten(self):
+        def task():
+            try:
+                import pyshorteners
+            except ImportError:
+                self._log("✗  pip install pyshorteners"); return
+
+            raw = self.url_var.get().strip()
+            if not raw:
+                self._log("✗  Enter a URL first."); return
+            if not self._validate_url(raw):
+                self._log("✗  URL must start with http:// or https://"); return
+
+            svc_name = self.svc_var.get()
+            svc_key  = self.SERVICES.get(svc_name, "tinyurl")
+            self._log(f"Shortening via {svc_name}…")
+            try:
+                s       = pyshorteners.Shortener()
+                short   = getattr(s, svc_key).short(raw)
+                self.result_var.set(short)
+                self._log(f"✓  {short}")
+            except Exception as e:
+                self._log(f"✗  {e}")
+        threading.Thread(target=task, daemon=True).start()
+
+    def _copy(self):
+        val = self.result_var.get()
+        if val and val != "—":
+            self.clipboard_clear()
+            self.clipboard_append(val)
+            self._log("📋  Copied to clipboard.")
+
+    def _log(self, msg):
+        self.status.configure(state="normal")
+        self.status.insert("end", msg + "\n")
+        self.status.see("end")
+        self.status.configure(state="disabled")
+
+
+# ─── Voice Translator ─────────────────────────────────────────────────────────
+
+class VoiceTranslatorPanel(ctk.CTkFrame):
+    """
+    Listen via mic → transcribe with SpeechRecognition → translate with
+    googletrans.  Distinct from SpeechRecorderPanel (which saves audio files);
+    this one focuses on live speech-to-translated-text.
+
+    pip install SpeechRecognition pyaudio googletrans==4.0.0rc1
+    """
+
+    LANGUAGES = {
+        "Afrikaans": "af", "Arabic": "ar", "Chinese (Simplified)": "zh-cn",
+        "Chinese (Traditional)": "zh-tw", "Czech": "cs", "Danish": "da",
+        "Dutch": "nl", "English": "en", "Finnish": "fi", "French": "fr",
+        "German": "de", "Greek": "el", "Hindi": "hi", "Hungarian": "hu",
+        "Indonesian": "id", "Italian": "it", "Japanese": "ja", "Korean": "ko",
+        "Malay": "ms", "Norwegian": "no", "Polish": "pl", "Portuguese": "pt",
+        "Romanian": "ro", "Russian": "ru", "Spanish": "es", "Swedish": "sv",
+        "Tagalog": "tl", "Thai": "th", "Turkish": "tr", "Ukrainian": "uk",
+        "Vietnamese": "vi",
+    }
+
+    def __init__(self, master):
+        super().__init__(master, fg_color=BG_PANEL, corner_radius=0)
+        self._build()
+
+    def _build(self):
+        _panel_header(self, "🌐", "Voice Translator",
+                      "Speak into your mic — get transcription and live translation.")
+
+        # ── Settings card ─────────────────────────────────────────────────
+        cfg = _card(self, "Settings")
+        cfg_row = ctk.CTkFrame(cfg, fg_color="transparent")
+        cfg_row.pack(fill="x", padx=16, pady=10)
+
+        ctk.CTkLabel(cfg_row, text="Speak In", font=("Consolas", 11),
+                     text_color=TEXT_SEC, width=90, anchor="w").pack(side="left")
+        self.src_lang_var = ctk.StringVar(value="English")
+        ctk.CTkComboBox(cfg_row, variable=self.src_lang_var,
+                        values=sorted(self.LANGUAGES.keys()),
+                        width=180, fg_color=BG_INPUT, border_color=BORDER,
+                        button_color=GREEN, button_hover_color=GREEN_HOVER,
+                        font=("Consolas", 11)).pack(side="left", padx=(0, 24))
+
+        ctk.CTkLabel(cfg_row, text="Translate To", font=("Consolas", 11),
+                     text_color=TEXT_SEC, width=100, anchor="w").pack(side="left")
+        self.tgt_lang_var = ctk.StringVar(value="French")
+        ctk.CTkComboBox(cfg_row, variable=self.tgt_lang_var,
+                        values=sorted(self.LANGUAGES.keys()),
+                        width=180, fg_color=BG_INPUT, border_color=BORDER,
+                        button_color=GREEN, button_hover_color=GREEN_HOVER,
+                        font=("Consolas", 11)).pack(side="left")
+
+        # ── Result cards ──────────────────────────────────────────────────
+        results = ctk.CTkFrame(self, fg_color="transparent")
+        results.pack(fill="both", expand=True, padx=32, pady=(0, 12))
+        results.columnconfigure((0, 1), weight=1, uniform="col")
+
+        def _text_card(parent, col, label):
+            card = ctk.CTkFrame(parent, fg_color=BG_CARD, corner_radius=10,
+                                border_width=1, border_color=BORDER)
+            card.grid(row=0, column=col, sticky="nsew", padx=(0 if col else 0, 8 if col == 0 else 0))
+            ctk.CTkLabel(card, text=label, font=("Consolas", 10),
+                         text_color=TEXT_MUTED).pack(anchor="w", padx=14, pady=(8, 0))
+            box = ctk.CTkTextbox(card, fg_color="transparent", font=("Consolas", 12),
+                                  text_color=TEXT_PRI, state="disabled",
+                                  scrollbar_button_color=BORDER, wrap="word")
+            box.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+            return box
+
+        self.transcript_box  = _text_card(results, 0, "Transcription")
+        self.translation_box = _text_card(results, 1, "Translation")
+
+        # ── Status log ────────────────────────────────────────────────────
+        self.status = _log_box(self)
+
+        # ── Buttons ───────────────────────────────────────────────────────
+        btn_row = ctk.CTkFrame(self, fg_color="transparent")
+        btn_row.pack(pady=12)
+        ctk.CTkButton(btn_row, text="🎙  Listen & Translate", fg_color=GREEN,
+                      hover_color=GREEN_HOVER, text_color="#000",
+                      font=("Consolas", 13, "bold"),
+                      command=self._listen).pack(side="left", padx=8)
+        ctk.CTkButton(btn_row, text="🗑  Clear", width=90, fg_color=BG_CARD,
+                      hover_color=BORDER, border_width=1, border_color=BORDER,
+                      text_color=TEXT_SEC, font=("Consolas", 12),
+                      command=self._clear).pack(side="left", padx=4)
+
+    # ── Core logic ────────────────────────────────────────────────────────
+
+    def _listen(self):
+        def task():
+            try:
+                import speech_recognition as sr
+            except ImportError:
+                self._log("✗  pip install SpeechRecognition"); return
+
+            try:
+                from deep_translator import GoogleTranslator
+            except ImportError:
+                self._log("✗  pip install deep-translator"); return
+
+            src_name = self.src_lang_var.get()
+            tgt_name = self.tgt_lang_var.get()
+            src_code = self.LANGUAGES.get(src_name, "en")
+            tgt_code = self.LANGUAGES.get(tgt_name, "fr")
+
+            self._log(f"🎙  Recording in {src_name} (8 s)…")
+            try:
+                samplerate = 44100
+                recording = sd.rec(int(8 * samplerate), samplerate=samplerate,
+                                   channels=1, dtype='int16')
+                sd.wait()
+                temp_wav = "temp_translate.wav"
+                sf.write(temp_wav, recording, samplerate)
+            except Exception as e:
+                self._log(f"✗  Recording error: {e}"); return
+
+            r = sr.Recognizer()
+            try:
+                with sr.AudioFile(temp_wav) as source:
+                    audio = r.record(source)
+                query = r.recognize_google(audio, language=src_code)
+            except sr.UnknownValueError:
+                self._log("✗  Could not understand audio.")
+                if os.path.exists(temp_wav): os.remove(temp_wav)
+                return
+            except sr.RequestError as e:
+                self._log(f"✗  Google API error: {e}")
+                if os.path.exists(temp_wav): os.remove(temp_wav)
+                return
+            except Exception as e:
+                self._log(f"✗  {e}")
+                if os.path.exists(temp_wav): os.remove(temp_wav)
+                return
+
+            self._set_text(self.transcript_box, query)
+            self._log(f"✓  Transcribed: {query}")
+            self._log(f"Translating to {tgt_name}…")
+
+            try:
+                result_text = GoogleTranslator(source=src_code, target=tgt_code).translate(query)
+                self._set_text(self.translation_box, result_text)
+                self._log(f"✓  Translation: {result_text}")
+            except Exception as e:
+                self._log(f"✗  Translation error: {e}")
+
+            if os.path.exists(temp_wav):
+                os.remove(temp_wav)
+
+        threading.Thread(target=task, daemon=True).start()
+
+    def _clear(self):
+        for box in (self.transcript_box, self.translation_box):
+            box.configure(state="normal")
+            box.delete("1.0", "end")
+            box.configure(state="disabled")
+        self.status.configure(state="normal")
+        self.status.delete("1.0", "end")
+        self.status.configure(state="disabled")
+
+    def _set_text(self, box, text):
+        box.configure(state="normal")
+        box.delete("1.0", "end")
+        box.insert("end", text)
+        box.configure(state="disabled")
 
     def _log(self, msg):
         self.status.configure(state="normal")
@@ -633,6 +1187,9 @@ TOOL_REGISTRY = [
     ("Budget Tracker",   "💰", BudgetTrackerPanel),
     ("Calculator",       "🔢", CalculatorPanel),
     ("File Organizer",   "📁", FileOrganizerPanel),
+    ("Code Reviewer",    "🧑‍💻", CodeReviewerPanel),      # ← new
+    ("URL Shortener",    "🔗", URLShortenerPanel),       # ← new
+    ("Voice Translator", "🌐", VoiceTranslatorPanel),    # ← new
 ]
 
 
@@ -659,7 +1216,6 @@ class FirawrApp(ctk.CTk):
         sb.pack(side="left", fill="y")
         sb.pack_propagate(False)
 
-        # Logo
         logo_frame = ctk.CTkFrame(sb, fg_color="transparent")
         logo_frame.pack(fill="x", padx=24, pady=(28, 6))
         ctk.CTkLabel(logo_frame, text="Firawr",
@@ -671,12 +1227,10 @@ class FirawrApp(ctk.CTk):
 
         ctk.CTkFrame(sb, height=1, fg_color=BORDER).pack(fill="x", padx=16, pady=(12, 20))
 
-        # Nav buttons
         nav = ctk.CTkFrame(sb, fg_color="transparent")
         nav.pack(fill="x", padx=12)
 
         for label, icon, _ in TOOL_REGISTRY:
-            is_dash = label == "Dashboard"
             btn = ctk.CTkButton(
                 nav,
                 text=f"  {icon}   {label}",
@@ -692,8 +1246,7 @@ class FirawrApp(ctk.CTk):
             btn.pack(fill="x", pady=2)
             self._nav_btns[label] = btn
 
-        # Version tag at bottom
-        ctk.CTkLabel(sb, text="v1.0  ·  add tools in TOOL_REGISTRY",
+        ctk.CTkLabel(sb, text="v1.1  ·  add tools in TOOL_REGISTRY",
                      font=("Consolas", 9), text_color=TEXT_MUTED,
                      wraplength=190).pack(side="bottom", pady=20, padx=16)
 
@@ -703,20 +1256,15 @@ class FirawrApp(ctk.CTk):
         self._content.pack(side="left", fill="both", expand=True)
 
     def _select(self, label):
-        # Deactivate old
         if self._active and self._active in self._nav_btns:
             self._nav_btns[self._active].configure(
                 fg_color="transparent", text_color=TEXT_SEC)
         if self._active and self._active in self._panels:
             self._panels[self._active].pack_forget()
 
-        # Activate new
         self._active = label
-        self._nav_btns[label].configure(
-            fg_color=BG_CARD,
-            text_color=GREEN)
+        self._nav_btns[label].configure(fg_color=BG_CARD, text_color=GREEN)
 
-        # Lazy-load panel
         if label not in self._panels:
             panel_cls = next(pc for l, _, pc in TOOL_REGISTRY if l == label)
             self._panels[label] = panel_cls(self._content)
